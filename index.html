@@ -9,6 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
 </head>
 <body>
+
 <header class="topbar">
   <div class="logos-container">
     <img src="logo.png" alt="Logo Hospital" class="logo-hospital">
@@ -24,6 +25,7 @@
     <p class="eyebrow">Ayuda de memoria para funcionarios</p>
     <h1>Proceso de Acreditación</h1>
   </div>
+</header>
 
 <main>
   <div class="searchwrap">
@@ -54,32 +56,6 @@
 </footer>
 
 <script>
-/* ============================================================================
-   CÓMO FUNCIONA (no hace falta editar nada de esto)
-   ----------------------------------------------------------------------------
-   La app detecta sola el usuario/repositorio de GitHub Pages donde está
-   publicada y lee el contenido de la carpeta "pdfs/" directamente desde
-   GitHub. Para agregar un afiche: suba el archivo a la carpeta "pdfs/" del
-   repositorio (cualquier tipo: PDF, imagen, Word, etc.) y listo, aparece
-   solo la próxima vez que alguien abra la app (se actualiza cada 10 min
-   o al tocar "Reintentar").
-
-   Título y descripción se generan automáticamente a partir del nombre del
-   archivo. Si quiere títulos y descripciones más prolijos, o agrupar por
-   etapa del proceso, cree (opcional) un archivo pdfs/info.json así:
-
-   {
-     "01-autoevaluacion.pdf": {
-       "titulo": "Autoevaluación institucional",
-       "descripcion": "Cómo se revisa el cumplimiento antes de la visita externa.",
-       "etapa": "Autoevaluación"
-     }
-   }
-
-   Solo hace falta agregar ahí los archivos que quiera personalizar; el
-   resto se muestra igual con nombre automático.
-   ============================================================================ */
-
 const CACHE_KEY = 'acreditacion_catalogo_v1';
 const CACHE_MINUTOS = 10;
 
@@ -131,19 +107,19 @@ async function obtenerJSON(url) {
 async function cargarCatalogoDesdeGitHub() {
   const repoInfo = detectarRepoGitHub();
   if (!repoInfo) {
-    throw new Error('Esta página no parece estar en GitHub Pages (usuario.github.io/repositorio). La detección automática solo funciona ahí.');
+    throw new Error('Esta página no parece estar en GitHub Pages.');
   }
   const { user, repo } = repoInfo;
 
   const archivos = await obtenerJSON(`https://api.github.com/repos/${user}/${repo}/contents/pdfs`);
   if (!Array.isArray(archivos)) {
-    throw new Error('La carpeta "pdfs" no existe en el repositorio, o el repositorio no es público.');
+    throw new Error('La carpeta "pdfs" no existe en el repositorio.');
   }
 
   let meta = {};
   const archivoInfo = archivos.find(f => f.name.toLowerCase() === 'info.json');
   if (archivoInfo) {
-    try { meta = await obtenerJSON(archivoInfo.download_url); } catch (e) { /* meta es opcional */ }
+    try { meta = await obtenerJSON(archivoInfo.download_url); } catch (e) {}
   }
 
   const items = archivos
@@ -161,7 +137,7 @@ async function cargarCatalogoDesdeGitHub() {
     });
 
   if (items.length === 0) {
-    throw new Error('La carpeta "pdfs" existe pero está vacía. Suba algún archivo ahí.');
+    throw new Error('La carpeta "pdfs" existe pero está vacía.');
   }
   return items;
 }
@@ -169,7 +145,7 @@ async function cargarCatalogoDesdeGitHub() {
 function guardarCache(items) {
   try {
     localStorage.setItem(CACHE_KEY, JSON.stringify({ items, ts: Date.now() }));
-  } catch (e) { /* si no hay localStorage, seguimos sin cache */ }
+  } catch (e) {}
 }
 
 function leerCache() {
@@ -204,7 +180,7 @@ async function iniciar() {
       CATALOGO = cache.items;
       render();
       els.estado.hidden = false;
-      els.estado.textContent = 'No se pudo actualizar la lista ahora mismo — mostrando la última versión guardada.';
+      els.estado.textContent = 'Mostrando la última versión guardada.';
     } else {
       mostrarError(err.message || String(err));
     }
@@ -227,7 +203,7 @@ function etapasUnicas() {
 function pintarChips() {
   const etapas = etapasUnicas();
   els.chips.innerHTML = '';
-  if (etapas.length <= 2) return; // no vale la pena filtrar si hay 1 sola etapa
+  if (etapas.length <= 2) return;
   etapas.forEach(et => {
     const btn = document.createElement('button');
     btn.className = 'chip' + (et === etapaActiva ? ' chip-activo' : '');
@@ -320,6 +296,7 @@ body{
   min-height: 100vh;
   padding-bottom: 40px;
 }
+
 .topbar {
   background: var(--teal-deep);
   color: #fff;
@@ -347,17 +324,7 @@ body{
   flex-shrink: 0;
   display: flex;
 }
-{  
-.topbar{
-  background: var(--teal-deep);
-  color: #fff;
-  padding: 22px 20px 26px;
-  display:flex;
-  align-items:center;
-  gap: 14px;
-  border-radius: 0 0 22px 22px;
-}
-.seal{ flex-shrink:0; display:flex; }
+
 .eyebrow{
   margin:0 0 4px;
   font-family:'IBM Plex Mono', monospace;
@@ -366,6 +333,7 @@ body{
   text-transform: uppercase;
   color: #BFDAD9;
 }
+
 h1{
   margin:0;
   font-family:'Space Grotesk', sans-serif;
@@ -438,7 +406,7 @@ main{ max-width: 640px; margin: 0 auto; padding: 18px 16px 0; }
 .tarjeta-icono{
   flex-shrink:0;
   width: 38px; height: 38px;
-  border-radius: 9px;
+  border-radius: 999px;
   background: var(--teal-deep);
   color: #fff;
   display:flex; align-items:center; justify-content:center;
