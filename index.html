@@ -7,15 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
-<style>
-
-  /* ======================================================================
-     CATÁLOGO DE AFICHES — EDITAR ACÁ
-     Cada objeto es un afiche. Copie el PDF dentro de la carpeta "pdfs"
-     y agregue una entrada. "etapa" es opcional: si la deja vacía, el
-     afiche aparece en "General".
-     ====================================================================== */
-</style>
 </head>
 <body>
 
@@ -39,147 +30,268 @@
       <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/>
       <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
     </svg>
-    <input id="buscador" type="search" placeholder="Buscar un afiche por nombre o tema…" autocomplete="off">
+    <input id="buscador" type="search" placeholder="Buscar un afiche por nombre o tema…" autocomplete="off" disabled>
   </div>
 
   <div id="chips" class="chips" role="tablist" aria-label="Filtrar por etapa"></div>
 
-  <p id="contador" class="contador"></p>
+  <p id="estado" class="estado">Cargando afiches…</p>
 
   <ul id="lista" class="lista"></ul>
 
   <p id="vacio" class="vacio" hidden>No hay afiches que coincidan con la búsqueda.</p>
+
+  <div id="errorBox" class="errorbox" hidden>
+    <p class="errorbox-titulo">No se pudieron cargar los afiches automáticamente.</p>
+    <p id="errorDetalle" class="errorbox-detalle"></p>
+    <button id="reintentar" class="errorbox-btn" type="button">Reintentar</button>
+  </div>
 </main>
 
 <footer class="foot">
   <p>Documentos internos del hospital · toque un afiche para abrirlo</p>
 </footer>
 
-<div id="visor" class="visor" hidden>
-  <div class="visor-barra">
-    <button id="cerrarVisor" class="cerrar" aria-label="Cerrar">
-      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
-    </button>
-    <span id="visorTitulo" class="visor-titulo"></span>
-    <a id="visorAbrir" class="visor-abrir" target="_blank" rel="noopener">Abrir en el visor del teléfono ↗</a>
-  </div>
-  <iframe id="visorFrame" title="Visor de PDF"></iframe>
-</div>
-
 <script>
 /* ============================================================================
-   CATÁLOGO DE AFICHES
+   CÓMO FUNCIONA (no hace falta editar nada de esto)
    ----------------------------------------------------------------------------
-   Para agregar un afiche nuevo:
-     1) Copie el archivo PDF dentro de la carpeta "pdfs/"
-     2) Agregue un objeto acá abajo con: archivo, titulo, descripcion y etapa
-   El campo "archivo" debe coincidir EXACTO con el nombre del PDF (con .pdf)
-   ============================================================================ */
-const CATALOGO = [
-  {
-    archivo: "pdfs/protocolo1.pdf",
-    titulo: "Autoevaluación institucional",
-    descripcion: "Cómo se revisa el cumplimiento de los estándares antes de la visita de los evaluadores externos.",
-    etapa: "Autoevaluación"
-  },
-  {
-    archivo: "pdfs/protocolo2.pdf",
-    titulo: "Protocolo RH",
-    descripcion: "Protocolo 2.",
-    etapa: "Estándares"
+   La app detecta sola el usuario/repositorio de GitHub Pages donde está
+   publicada y lee el contenido de la carpeta "pdfs/" directamente desde
+   GitHub. Para agregar un afiche: suba el archivo a la carpeta "pdfs/" del
+   repositorio (cualquier tipo: PDF, imagen, Word, etc.) y listo, aparece
+   solo la próxima vez que alguien abra la app (se actualiza cada 10 min
+   o al tocar "Reintentar").
+
+   Título y descripción se generan automáticamente a partir del nombre del
+   archivo. Si quiere títulos y descripciones más prolijos, o agrupar por
+   etapa del proceso, cree (opcional) un archivo pdfs/info.json así:
+
+   {
+     "01-autoevaluacion.pdf": {
+       "titulo": "Autoevaluación institucional",
+       "descripcion": "Cómo se revisa el cumplimiento antes de la visita externa.",
+       "etapa": "Autoevaluación"
+     }
    }
-  ];
 
-/* ============================================================================
-   LÓGICA DE LA APP — no es necesario tocar esto para agregar afiches
+   Solo hace falta agregar ahí los archivos que quiera personalizar; el
+   resto se muestra igual con nombre automático.
    ============================================================================ */
-const lista = document.getElementById('lista');
-const buscador = document.getElementById('buscador');
-const chipsWrap = document.getElementById('chips');
-const contador = document.getElementById('contador');
-const vacio = document.getElementById('vacio');
-const visor = document.getElementById('visor');
-const visorFrame = document.getElementById('visorFrame');
-const visorTitulo = document.getElementById('visorTitulo');
-const visorAbrir = document.getElementById('visorAbrir');
 
+const CACHE_KEY = 'acreditacion_catalogo_v1';
+const CACHE_MINUTOS = 10;
+
+const els = {
+  buscador: document.getElementById('buscador'),
+  chips: document.getElementById('chips'),
+  estado: document.getElementById('estado'),
+  lista: document.getElementById('lista'),
+  vacio: document.getElementById('vacio'),
+  errorBox: document.getElementById('errorBox'),
+  errorDetalle: document.getElementById('errorDetalle'),
+  reintentar: document.getElementById('reintentar'),
+};
+
+let CATALOGO = [];
 let etapaActiva = 'Todas';
 
+function detectarRepoGitHub() {
+  const host = location.hostname;
+  if (!host.endsWith('github.io')) return null;
+  const user = host.split('.')[0];
+  const partes = location.pathname.split('/').filter(Boolean);
+  const repo = partes[0];
+  if (!user || !repo) return null;
+  return { user, repo };
+}
+
+function tituloDesdeArchivo(nombre) {
+  const sinExt = nombre.replace(/\.[^.]+$/, '');
+  const sinPrefijo = sinExt.replace(/^\d+[-_.\s]*/, '');
+  const conEspacios = sinPrefijo.replace(/[-_]+/g, ' ').trim();
+  const base = conEspacios.length ? conEspacios : sinExt;
+  return base.charAt(0).toUpperCase() + base.slice(1);
+}
+
+function iconoPara(nombre) {
+  const ext = (nombre.split('.').pop() || '').toLowerCase();
+  if (['jpg','jpeg','png','gif','webp'].includes(ext)) return 'imagen';
+  if (ext === 'pdf') return 'pdf';
+  return 'archivo';
+}
+
+async function obtenerJSON(url) {
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+
+async function cargarCatalogoDesdeGitHub() {
+  const repoInfo = detectarRepoGitHub();
+  if (!repoInfo) {
+    throw new Error('Esta página no parece estar en GitHub Pages (usuario.github.io/repositorio). La detección automática solo funciona ahí.');
+  }
+  const { user, repo } = repoInfo;
+
+  const archivos = await obtenerJSON(`https://api.github.com/repos/${user}/${repo}/contents/pdfs`);
+  if (!Array.isArray(archivos)) {
+    throw new Error('La carpeta "pdfs" no existe en el repositorio, o el repositorio no es público.');
+  }
+
+  let meta = {};
+  const archivoInfo = archivos.find(f => f.name.toLowerCase() === 'info.json');
+  if (archivoInfo) {
+    try { meta = await obtenerJSON(archivoInfo.download_url); } catch (e) { /* meta es opcional */ }
+  }
+
+  const items = archivos
+    .filter(f => f.type === 'file' && !f.name.startsWith('.') && f.name.toLowerCase() !== 'info.json')
+    .map(f => {
+      const m = meta[f.name] || {};
+      return {
+        archivo: f.download_url,
+        nombreArchivo: f.name,
+        titulo: m.titulo || tituloDesdeArchivo(f.name),
+        descripcion: m.descripcion || '',
+        etapa: (m.etapa && m.etapa.trim()) ? m.etapa.trim() : 'General',
+        icono: iconoPara(f.name),
+      };
+    });
+
+  if (items.length === 0) {
+    throw new Error('La carpeta "pdfs" existe pero está vacía. Suba algún archivo ahí.');
+  }
+  return items;
+}
+
+function guardarCache(items) {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ items, ts: Date.now() }));
+  } catch (e) { /* si no hay localStorage, seguimos sin cache */ }
+}
+
+function leerCache() {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) { return null; }
+}
+
+async function iniciar() {
+  els.errorBox.hidden = true;
+  els.estado.hidden = false;
+  els.estado.textContent = 'Cargando afiches…';
+
+  const cache = leerCache();
+  const cacheFresca = cache && (Date.now() - cache.ts) < CACHE_MINUTOS * 60 * 1000;
+
+  if (cacheFresca) {
+    CATALOGO = cache.items;
+    render();
+    return;
+  }
+
+  try {
+    const items = await cargarCatalogoDesdeGitHub();
+    CATALOGO = items;
+    guardarCache(items);
+    render();
+  } catch (err) {
+    if (cache && cache.items && cache.items.length) {
+      CATALOGO = cache.items;
+      render();
+      els.estado.hidden = false;
+      els.estado.textContent = 'No se pudo actualizar la lista ahora mismo — mostrando la última versión guardada.';
+    } else {
+      mostrarError(err.message || String(err));
+    }
+  }
+}
+
+function mostrarError(detalle) {
+  els.estado.hidden = true;
+  els.lista.innerHTML = '';
+  els.vacio.hidden = true;
+  els.errorBox.hidden = false;
+  els.errorDetalle.textContent = detalle;
+}
+
 function etapasUnicas() {
-  const set = new Set(CATALOGO.map(a => a.etapa && a.etapa.trim() ? a.etapa.trim() : 'General'));
+  const set = new Set(CATALOGO.map(a => a.etapa));
   return ['Todas', ...Array.from(set)];
 }
 
 function pintarChips() {
-  chipsWrap.innerHTML = '';
-  etapasUnicas().forEach(et => {
+  const etapas = etapasUnicas();
+  els.chips.innerHTML = '';
+  if (etapas.length <= 2) return; // no vale la pena filtrar si hay 1 sola etapa
+  etapas.forEach(et => {
     const btn = document.createElement('button');
     btn.className = 'chip' + (et === etapaActiva ? ' chip-activo' : '');
     btn.textContent = et;
     btn.addEventListener('click', () => { etapaActiva = et; pintarChips(); pintarLista(); });
-    chipsWrap.appendChild(btn);
+    els.chips.appendChild(btn);
   });
 }
 
+function svgIcono(tipo) {
+  if (tipo === 'imagen') {
+    return `<svg viewBox="0 0 24 24" width="22" height="22"><rect x="2" y="3" width="20" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="8" cy="9" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4 17 L9.5 12 L14 15.5 L16.5 13 L20 17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
+  }
+  return `<svg viewBox="0 0 24 28" width="22" height="26"><path d="M3 1.5h13l5 5V26.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2.5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M16 1.5V6.5a1 1 0 0 0 1 1H21.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>`;
+}
+
 function pintarLista() {
-  const q = buscador.value.trim().toLowerCase();
+  const q = els.buscador.value.trim().toLowerCase();
   const items = CATALOGO.filter(a => {
-    const et = a.etapa && a.etapa.trim() ? a.etapa.trim() : 'General';
-    const pasaEtapa = etapaActiva === 'Todas' || et === etapaActiva;
+    const pasaEtapa = etapaActiva === 'Todas' || a.etapa === etapaActiva;
     const texto = (a.titulo + ' ' + a.descripcion).toLowerCase();
     const pasaTexto = q === '' || texto.includes(q);
     return pasaEtapa && pasaTexto;
   });
 
-  lista.innerHTML = '';
+  els.lista.innerHTML = '';
   items.forEach((a, i) => {
-    const et = a.etapa && a.etapa.trim() ? a.etapa.trim() : 'General';
     const li = document.createElement('li');
     li.className = 'tarjeta';
     li.style.setProperty('--i', i);
     li.innerHTML = `
-      <button class="tarjeta-btn" type="button">
-        <span class="tarjeta-icono" aria-hidden="true">
-          <svg viewBox="0 0 24 28" width="22" height="26">
-            <path d="M3 1.5h13l5 5V26.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2.5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.6"/>
-            <path d="M16 1.5V6.5a1 1 0 0 0 1 1H21.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
-          </svg>
-        </span>
+      <a class="tarjeta-btn" href="${a.archivo}" target="_blank" rel="noopener">
+        <span class="tarjeta-icono" aria-hidden="true">${svgIcono(a.icono)}</span>
         <span class="tarjeta-texto">
-          <span class="tarjeta-etapa">${et}</span>
+          <span class="tarjeta-etapa">${a.etapa}</span>
           <span class="tarjeta-titulo">${a.titulo}</span>
-          <span class="tarjeta-desc">${a.descripcion}</span>
+          ${a.descripcion ? `<span class="tarjeta-desc">${a.descripcion}</span>` : ''}
         </span>
         <span class="tarjeta-flecha" aria-hidden="true">›</span>
-      </button>
+      </a>
     `;
-    li.querySelector('.tarjeta-btn').addEventListener('click', () => abrirPdf(a));
-    lista.appendChild(li);
+    els.lista.appendChild(li);
   });
 
-  vacio.hidden = items.length !== 0;
-  contador.textContent = items.length === 0 ? '' :
-    (items.length === 1 ? '1 afiche' : items.length + ' afiches');
+  els.vacio.hidden = items.length !== 0;
+  els.estado.hidden = items.length === 0 ? true : true;
 }
 
-function abrirPdf(a) {
-  visorTitulo.textContent = a.titulo;
-  visorFrame.src = a.archivo;
-  visorAbrir.href = a.archivo;
-  visor.hidden = false;
-  document.body.style.overflow = 'hidden';
+function render() {
+  els.buscador.disabled = false;
+  els.errorBox.hidden = true;
+  pintarChips();
+  pintarLista();
+  if (CATALOGO.length) {
+    els.estado.hidden = true;
+  }
 }
 
-document.getElementById('cerrarVisor').addEventListener('click', () => {
-  visor.hidden = true;
-  visorFrame.src = '';
-  document.body.style.overflow = '';
+els.buscador.addEventListener('input', pintarLista);
+els.reintentar.addEventListener('click', () => {
+  try { localStorage.removeItem(CACHE_KEY); } catch (e) {}
+  iniciar();
 });
 
-buscador.addEventListener('input', pintarLista);
-
-pintarChips();
-pintarLista();
+iniciar();
 </script>
 
 <style>
@@ -236,15 +348,8 @@ h1{
 
 main{ max-width: 640px; margin: 0 auto; padding: 18px 16px 0; }
 
-.searchwrap{
-  position:relative;
-  margin-bottom: 14px;
-}
-.searchicon{
-  position:absolute; left:14px; top:50%; transform:translateY(-50%);
-  color: var(--ink-soft);
-  pointer-events:none;
-}
+.searchwrap{ position:relative; margin-bottom: 14px; }
+.searchicon{ position:absolute; left:14px; top:50%; transform:translateY(-50%); color: var(--ink-soft); pointer-events:none; }
 #buscador{
   width:100%;
   padding: 13px 14px 13px 40px;
@@ -255,19 +360,10 @@ main{ max-width: 640px; margin: 0 auto; padding: 18px 16px 0; }
   font-family: 'Inter', sans-serif;
   color: var(--ink);
 }
-#buscador:focus{
-  outline: 2px solid var(--teal);
-  outline-offset: 1px;
-}
+#buscador:disabled{ opacity: .6; }
+#buscador:focus{ outline: 2px solid var(--teal); outline-offset: 1px; }
 
-.chips{
-  display:flex;
-  gap:8px;
-  overflow-x:auto;
-  padding-bottom: 4px;
-  margin-bottom: 6px;
-  -webkit-overflow-scrolling: touch;
-}
+.chips{ display:flex; gap:8px; overflow-x:auto; padding-bottom: 4px; margin-bottom: 6px; -webkit-overflow-scrolling: touch; }
 .chips::-webkit-scrollbar{ display:none; }
 .chip{
   flex-shrink:0;
@@ -280,19 +376,15 @@ main{ max-width: 640px; margin: 0 auto; padding: 18px 16px 0; }
   border-radius: 999px;
   cursor:pointer;
 }
-.chip-activo{
-  background: var(--teal-deep);
-  border-color: var(--teal-deep);
-  color:#fff;
-}
+.chip-activo{ background: var(--teal-deep); border-color: var(--teal-deep); color:#fff; }
 .chip:focus-visible{ outline: 2px solid var(--teal); outline-offset:2px; }
 
-.contador{
-  margin: 10px 2px 8px;
+.estado{
+  margin: 10px 2px 12px;
   font-family:'IBM Plex Mono', monospace;
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--ink-soft);
-  letter-spacing:.03em;
+  letter-spacing:.02em;
 }
 
 .lista{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
@@ -310,6 +402,7 @@ main{ max-width: 640px; margin: 0 auto; padding: 18px 16px 0; }
   cursor:pointer;
   font-family: inherit;
   color: inherit;
+  text-decoration:none;
 }
 .tarjeta-btn:active{ background: var(--gold-soft); }
 .tarjeta-btn:focus-visible{ outline: 2px solid var(--teal); outline-offset: 2px; }
@@ -331,91 +424,38 @@ main{ max-width: 640px; margin: 0 auto; padding: 18px 16px 0; }
   text-transform:uppercase;
   color: var(--gold);
 }
-.tarjeta-titulo{
-  font-family:'Space Grotesk', sans-serif;
-  font-weight:600;
-  font-size: 15.5px;
-  color: var(--ink);
-}
-.tarjeta-desc{
-  font-size: 13px;
-  color: var(--ink-soft);
-  line-height:1.35;
-}
+.tarjeta-titulo{ font-family:'Space Grotesk', sans-serif; font-weight:600; font-size: 15.5px; color: var(--ink); }
+.tarjeta-desc{ font-size: 13px; color: var(--ink-soft); line-height:1.35; }
+.tarjeta-flecha{ margin-left:auto; flex-shrink:0; font-size: 22px; color: var(--line); }
 
-.tarjeta-flecha{
-  margin-left:auto;
-  flex-shrink:0;
-  font-size: 22px;
-  color: var(--line);
-}
+.vacio{ text-align:center; color: var(--ink-soft); font-size: 14px; padding: 30px 10px; }
 
-.vacio{
+.errorbox{
+  margin-top: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px;
   text-align:center;
-  color: var(--ink-soft);
-  font-size: 14px;
-  padding: 30px 10px;
 }
-
-.foot{
-  max-width:640px;
-  margin: 26px auto 0;
-  padding: 0 16px;
-  text-align:center;
-  color: var(--ink-soft);
-  font-size: 12px;
-}
-
-.visor{
-  position: fixed; inset:0;
-  background: var(--ink);
-  z-index: 100;
-  display:flex;
-  flex-direction:column;
-}
-.visor-barra{
-  display:flex;
-  align-items:center;
-  gap: 10px;
-  padding: 12px 14px;
+.errorbox-titulo{ font-family:'Space Grotesk', sans-serif; font-weight:600; font-size: 15px; margin: 0 0 6px; }
+.errorbox-detalle{ font-size: 13px; color: var(--ink-soft); margin: 0 0 14px; line-height:1.4; }
+.errorbox-btn{
   background: var(--teal-deep);
   color:#fff;
-}
-.cerrar{
-  background:none; border:none; color:#fff;
-  display:flex; padding:4px; cursor:pointer;
-  border-radius: 6px;
-}
-.cerrar:focus-visible{ outline:2px solid var(--gold); }
-.visor-titulo{
-  font-family:'Space Grotesk', sans-serif;
-  font-size: 14px;
-  font-weight:600;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-  flex:1;
-}
-.visor-abrir{
-  font-family:'IBM Plex Mono', monospace;
-  font-size: 11px;
-  color: var(--gold-soft);
-  text-decoration:none;
-  flex-shrink:0;
-}
-#visorFrame{
-  flex:1;
-  width:100%;
   border:none;
-  background:#fff;
+  padding: 10px 18px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: inherit;
+  cursor:pointer;
 }
+
+.foot{ max-width:640px; margin: 26px auto 0; padding: 0 16px; text-align:center; color: var(--ink-soft); font-size: 12px; }
 
 @media (prefers-reduced-motion: no-preference){
   .tarjeta{ animation: entrar .28s ease both; animation-delay: calc(var(--i) * 30ms); }
-  @keyframes entrar{
-    from{ opacity:0; transform: translateY(6px); }
-    to{ opacity:1; transform: translateY(0); }
-  }
+  @keyframes entrar{ from{ opacity:0; transform: translateY(6px); } to{ opacity:1; transform: translateY(0); } }
 }
 </style>
 </body>
